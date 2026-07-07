@@ -953,7 +953,13 @@ function waLoadInquirer() {
 }
 
 function waShellQuote() {
-    printf '%q' "$1"
+    local value="$1"
+
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//\$/\\$}"
+    value="${value//\`/\\\`}"
+    printf '"%s"' "$value"
 }
 
 function waPrepareConnection() {
@@ -1212,12 +1218,15 @@ function waInstallOfficialShortcut() {
     mkdir -p "${APPDATA_PATH}/apps"
     cp -r --no-preserve=mode "${SOURCE_PATH}/apps/${app_id}" "$destination"
 
-    quoted_executable=$(waShellQuote "$actual_executable")
     tmp_path=$(mktemp "${info_path}.XXXXXX") || waThrowExit "$EC_UNKNOWN"
-    awk -v exe="$quoted_executable" '
-        /^WIN_EXECUTABLE=/ { print "WIN_EXECUTABLE=" exe; next }
-        { print }
-    ' "$info_path" >"$tmp_path" && mv "$tmp_path" "$info_path"
+    quoted_executable=$(waShellQuote "$actual_executable")
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == WIN_EXECUTABLE=* ]]; then
+            printf 'WIN_EXECUTABLE=%s\n' "$quoted_executable"
+        else
+            printf '%s\n' "$line"
+        fi
+    done <"$info_path" >"$tmp_path" && mv "$tmp_path" "$info_path"
 
     waConfigureAppShortcut "$app_id" svg
     waRefreshOfficeProtocolHandler
