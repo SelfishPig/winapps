@@ -1289,6 +1289,7 @@ function waFindOfficialAppForExecutable() {
 
 function waBuildInstallOptions() {
     SCAN_LABELS=()
+    SCAN_MENU_LABELS=()
     SCAN_TYPES=()
     SCAN_IDS=()
     SCAN_EXES=()
@@ -1364,6 +1365,33 @@ function waBuildInstallOptions() {
     fi
 }
 
+function waAddInstallMenuSection() {
+    local section_label="$1"
+    local section_type="$2"
+    local scan_index=""
+    local added_section=false
+
+    for scan_index in "${!SCAN_LABELS[@]}"; do
+        [[ "${SCAN_TYPES[$scan_index]}" == "$section_type" ]] || continue
+
+        if [[ "$added_section" == false ]]; then
+            SCAN_MENU_LABELS+=("-- ${section_label} --")
+            added_section=true
+        fi
+
+        SCAN_MENU_LABELS+=("${SCAN_LABELS[$scan_index]}")
+        SCAN_INDEX_BY_LABEL["${SCAN_LABELS[$scan_index]}"]="$scan_index"
+    done
+}
+
+function waBuildInstallMenuOptions() {
+    SCAN_MENU_LABELS=()
+    declare -gA SCAN_INDEX_BY_LABEL=()
+
+    waAddInstallMenuSection "Community tested apps" "official"
+    waAddInstallMenuSection "Other detected apps" "detected"
+}
+
 function waScanInstall() {
     local selected_apps=()
     local selected_app=""
@@ -1375,13 +1403,14 @@ function waScanInstall() {
     waCheckRDPAccess
     waScanWindowsApplications
     waBuildInstallOptions
+    waBuildInstallMenuOptions
 
     if ((${#SCAN_LABELS[@]} == 0)); then
         echo "No new Windows applications were detected for shortcut installation."
         return 0
     fi
 
-    inqChkBx "Select Windows applications to add to Linux" SCAN_LABELS selected_apps
+    inqChkBx "Select Windows applications to add to Linux" SCAN_MENU_LABELS selected_apps
 
     for selected_app in "${selected_apps[@]}"; do
         selected_index="${SCAN_INDEX_BY_LABEL[$selected_app]}"
