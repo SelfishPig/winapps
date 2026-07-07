@@ -1,3 +1,7 @@
+param (
+    [string]$KnownAppsPath = ""
+)
+
 ### FUNCTIONS ###
 # Name: 'GetApplicationIcon'
 # Role: Extract the icon from a given executable file as a base-64 string.
@@ -54,15 +58,22 @@ function PrintArrayData {
     param (
         [string[]]$Names,
         [string[]]$Paths,
-        [string]$Source
+        [string]$Source,
+        [string[]]$AppIds = @()
     )
 
     # Combine the arrays into an array of objects
     $NamesandPaths = @()
     for ($i = 0; $i -lt $Names.Length; $i++) {
+        $appId = ""
+        if ($i -lt $AppIds.Length) {
+            $appId = $AppIds[$i]
+        }
+
         $NamesandPaths += [PSCustomObject]@{
             Name = $Names[$i]
             Path = $Paths[$i]
+            AppId = $appId
         }
     }
 
@@ -80,17 +91,22 @@ function PrintArrayData {
         }
 
         # Add the appropriate tag to the application name.
-        if ($Source -ne "winreg") {
+        if ($Source -ne "winreg" -and $Source -ne "known") {
             $Application.Name = $Application.Name + " [" + $Source.ToUpper() + "]"
         }
 
-        # Store the application icon as a base-64 string.
-        $Icon = GetApplicationIcon -exePath $Application.Path
+        if ($Application.AppId) {
+            $Icon = ""
+        } else {
+            # Store the application icon as a base-64 string.
+            $Icon = GetApplicationIcon -exePath $Application.Path
+        }
 
         # Output the results as bash commands that append the results to several bash arrays.
         Write-Output ('NAMES+=("' + $Application.Name + '")')
         Write-Output ('EXES+=("' + $Application.Path + '")')
         Write-Output ('ICONS+=("' + $Icon + '")')
+        Write-Output ('APPIDS+=("' + $Application.AppId + '")')
     }
 }
 
@@ -321,13 +337,59 @@ function AppSearchScoop {
     }
 }
 
+# Name: 'AppSearchKnownApps'
+# Role: Test community-maintained WinApps definitions and include matches in the scan output.
+function AppSearchKnownApps {
+    param (
+        [string]$ManifestPath
+    )
+
+    # Initialise empty arrays.
+    $appIds = @()
+    $exeNames = @()
+    $exePaths = @()
+
+    if ([string]::IsNullOrWhiteSpace($ManifestPath) -or -not (Test-Path -LiteralPath $ManifestPath)) {
+        return
+    }
+
+    $knownApps = Import-Csv -LiteralPath $ManifestPath -Delimiter "`t"
+    foreach ($app in $knownApps) {
+        if ([string]::IsNullOrWhiteSpace($app.Id) -or [string]::IsNullOrWhiteSpace($app.Path)) {
+            continue
+        }
+
+        $exePath = [Environment]::ExpandEnvironmentVariables($app.Path)
+        if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+            continue
+        }
+
+        $appIds += $app.Id
+        if ([string]::IsNullOrWhiteSpace($app.Name)) {
+            $exeNames += GetApplicationName -exePath $exePath
+        } else {
+            $exeNames += $app.Name
+        }
+
+        try {
+            $exePaths += (Get-Item -LiteralPath $exePath).FullName
+        } catch {
+            $exePaths += $exePath
+        }
+    }
+
+    PrintArrayData -Names $exeNames -Paths $exePaths -Source "known" -AppIds $appIds
+}
+
 ### SEQUENTIAL LOGIC ###
 # Print bash commands to define three new arrays.
 Write-Output 'NAMES=()'
 Write-Output 'EXES=()'
 Write-Output 'ICONS=()'
+Write-Output 'APPIDS=()'
 
 # Search for installed applications.
+AppSearchKnownApps -ManifestPath $KnownAppsPath
 AppSearchWinReg     # Windows Registry
 if (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue){
     AppSearchUWP        # Universal Windows Platform

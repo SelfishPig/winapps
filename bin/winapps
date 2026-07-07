@@ -36,14 +36,13 @@ readonly SCRIPT_DIR_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && p
 # shellcheck disable=SC2155 # Silence warnings regarding masking return values through simultaneous declaration and assignment.
 readonly SOURCE_PATH="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." &>/dev/null && pwd)"
 readonly USER_APPDATA_PATH_WIN='\\tsclient\home\.local\share\winapps'
-readonly BATCH_SCRIPT_PATH="${APPDATA_PATH}/installed.bat"
-readonly BATCH_SCRIPT_PATH_WIN="${USER_APPDATA_PATH_WIN}\\installed.bat"
-readonly TMP_INST_FILE_PATH="${APPDATA_PATH}/installed.tmp"
-readonly TMP_INST_FILE_PATH_WIN="${USER_APPDATA_PATH_WIN}\\installed.tmp"
-readonly INST_FILE_PATH="${APPDATA_PATH}/installed"
+readonly SCAN_SCRIPT_PATH="${APPDATA_PATH}/scan.bat"
+readonly SCAN_SCRIPT_PATH_WIN="${USER_APPDATA_PATH_WIN}\\scan.bat"
 readonly PS_SCRIPT_PATH="${SOURCE_PATH}/install/ExtractPrograms.ps1"
 readonly PS_SCRIPT_HOME_PATH="${APPDATA_PATH}/ExtractPrograms.ps1"
 readonly PS_SCRIPT_HOME_PATH_WIN="${USER_APPDATA_PATH_WIN}\\ExtractPrograms.ps1"
+readonly KNOWN_APPS_PATH="${APPDATA_PATH}/known-apps.tsv"
+readonly KNOWN_APPS_PATH_WIN="${USER_APPDATA_PATH_WIN}\\known-apps.tsv"
 readonly DETECTED_FILE_PATH="${APPDATA_PATH}/detected"
 readonly DETECTED_FILE_PATH_WIN="${USER_APPDATA_PATH_WIN}\\detected"
 readonly TEST_PATH="${APPDATA_PATH}/FreeRDP_Connection_Test"
@@ -310,7 +309,7 @@ Please run:
         ;;
     "$EC_APPQUERY_FAIL")
         dprint "ERROR: APPLICATION QUERY FAILED. EXITING."
-        notify-send --expire-time=8000 --icon="dialog-error" --app-name="WinApps" --urgency="low" "WinApps" "Failed to query Windows for installed applications."
+        notify-send --expire-time=8000 --icon="dialog-error" --app-name="WinApps" --urgency="low" "WinApps" "Failed to scan Windows applications."
         ;;
     "$EC_MISSING_DIALOG")
         dprint "ERROR: DIALOG IS NOT INSTALLED. EXITING."
@@ -1039,37 +1038,49 @@ function waCheckRDPAccess() {
     echo "Done."
 }
 
-function waFindInstalled() {
+function waWriteKnownAppsManifest() {
+    local app_dir=""
+    local app_id=""
+
+    {
+        printf 'Id\tName\tPath\n'
+        for app_dir in "${SOURCE_PATH}"/apps/*; do
+            [[ -d "$app_dir" ]] || continue
+            app_id="$(basename "$app_dir")"
+
+            FULL_NAME=""
+            WIN_EXECUTABLE=""
+            # shellcheck source=/dev/null
+            source "${SOURCE_PATH}/apps/${app_id}/info"
+            [[ -n "$WIN_EXECUTABLE" ]] || continue
+
+            printf '%s\t%s\t%s\n' "$app_id" "$FULL_NAME" "$WIN_EXECUTABLE"
+        done
+    } >"$KNOWN_APPS_PATH"
+}
+
+function waScanWindowsApplications() {
     local FREERDP_LOG=""
     local FREERDP_PROC=""
     local ELAPSED_TIME=0
-    local APPLICATION=""
 
     echo -n "Scanning Windows applications... "
 
     FREERDP_LOG="${APPDATA_PATH}/FreeRDP_Scan_$(date +'%Y%m%d_%H%M_%N').log"
     mkdir -p "$APPDATA_PATH"
-    rm -f "$BATCH_SCRIPT_PATH" "$TMP_INST_FILE_PATH" "$INST_FILE_PATH" "$PS_SCRIPT_HOME_PATH" "$DETECTED_FILE_PATH"
+    rm -f \
+        "$SCAN_SCRIPT_PATH" \
+        "$PS_SCRIPT_HOME_PATH" \
+        "$KNOWN_APPS_PATH" \
+        "$DETECTED_FILE_PATH" \
+        "${APPDATA_PATH}/installed" \
+        "${APPDATA_PATH}/installed.tmp" \
+        "${APPDATA_PATH}/installed.bat"
     cp "$PS_SCRIPT_PATH" "$PS_SCRIPT_HOME_PATH"
+    waWriteKnownAppsManifest
 
-    echo "TYPE NUL > \"${TMP_INST_FILE_PATH_WIN}\"" >"$BATCH_SCRIPT_PATH"
-
-    for APPLICATION in "${SOURCE_PATH}"/apps/*; do
-        [[ -d "$APPLICATION" ]] || continue
-        APPLICATION="$(basename "$APPLICATION")"
-
-        if [[ "$APPLICATION" == "ms-office-protocol-handler.desktop" ]]; then
-            continue
-        fi
-
-        # shellcheck source=/dev/null
-        source "${SOURCE_PATH}/apps/${APPLICATION}/info"
-        echo "IF EXIST \"${WIN_EXECUTABLE}\" ECHO ${APPLICATION}^|^|^|${WIN_EXECUTABLE} >> \"${TMP_INST_FILE_PATH_WIN}\"" >>"$BATCH_SCRIPT_PATH"
-    done
-
-    echo "powershell.exe -ExecutionPolicy Bypass -File ${PS_SCRIPT_HOME_PATH_WIN} > ${DETECTED_FILE_PATH_WIN}" >>"$BATCH_SCRIPT_PATH"
-    echo "MOVE /Y \"${TMP_INST_FILE_PATH_WIN}\" \"${INST_FILE_PATH_WIN}\" > NUL" >>"$BATCH_SCRIPT_PATH"
-    echo "tsdiscon" >>"$BATCH_SCRIPT_PATH"
+    echo "powershell.exe -ExecutionPolicy Bypass -File ${PS_SCRIPT_HOME_PATH_WIN} -KnownAppsPath ${KNOWN_APPS_PATH_WIN} > ${DETECTED_FILE_PATH_WIN}" >"$SCAN_SCRIPT_PATH"
+    echo "tsdiscon" >>"$SCAN_SCRIPT_PATH"
 
     # shellcheck disable=SC2140,SC2027,SC2086 # FreeRDP arguments intentionally contain structured values.
     $FREERDP_COMMAND \
@@ -1081,13 +1092,13 @@ function waFindInstalled() {
         /scale:"$RDP_SCALE" \
         +auto-reconnect \
         +home-drive \
-        /app:program:"C:\Windows\System32\cmd.exe",cmd:"/C $BATCH_SCRIPT_PATH_WIN" \
+        /app:program:"C:\Windows\System32\cmd.exe",cmd:"/C $SCAN_SCRIPT_PATH_WIN" \
         /v:"$RDP_IP":"$RDP_PORT" &>"$FREERDP_LOG" &
 
     FREERDP_PROC=$!
 
     while [ "$ELAPSED_TIME" -lt "$APP_SCAN_TIMEOUT" ]; do
-        if ! ps -p "$FREERDP_PROC" &>/dev/null || [ -f "$INST_FILE_PATH" ]; then
+        if ! ps -p "$FREERDP_PROC" &>/dev/null || [ -f "$DETECTED_FILE_PATH" ]; then
             break
         fi
 
@@ -1099,15 +1110,7 @@ function waFindInstalled() {
         kill -9 "$FREERDP_PROC" &>/dev/null
     fi
 
-    if [[ ! -f "$INST_FILE_PATH" && -f "$TMP_INST_FILE_PATH" ]]; then
-        mv "$TMP_INST_FILE_PATH" "$INST_FILE_PATH"
-    fi
-
-    if [[ ! -f "$INST_FILE_PATH" && -f "$DETECTED_FILE_PATH" ]]; then
-        : >"$INST_FILE_PATH"
-    fi
-
-    if [[ ! -f "$INST_FILE_PATH" && ! -f "$DETECTED_FILE_PATH" ]]; then
+    if [[ ! -f "$DETECTED_FILE_PATH" ]]; then
         echo "Failed."
         echo "FreeRDP log: $FREERDP_LOG"
         waThrowExit "$EC_APPQUERY_FAIL"
@@ -1122,20 +1125,18 @@ function waShortcutInstalled() {
     [[ -f "${APP_PATH}/${app_id}.desktop" || -f "${BIN_PATH}/${app_id}" ]]
 }
 
-function waArrayContains() {
-    local needle="$1"
-    shift
-    local item=""
-
-    for item in "$@"; do
-        [[ "$item" == "$needle" ]] && return 0
-    done
-
-    return 1
-}
-
 function waSafeAppId() {
     printf '%s' "$1" | tr ' /\\' '---' | sed 's/[^A-Za-z0-9._-]/_/g'
+}
+
+function waNormalizeWindowsExecutable() {
+    local executable="$1"
+    executable="${executable%\"}"
+    executable="${executable#\"}"
+    executable="${executable//\//\\}"
+    executable="${executable//%USERNAME%/$RDP_USER}"
+    executable="${executable//%username%/$RDP_USER}"
+    printf '%s' "${executable,,}"
 }
 
 function waIsOfficeApp() {
@@ -1248,6 +1249,35 @@ function waInstallDetectedShortcut() {
     echo "Done."
 }
 
+function waBuildOfficialAppIndex() {
+    local app_dir=""
+    local app_id=""
+    local normalized_executable=""
+
+    declare -gA OFFICIAL_APP_BY_EXE=()
+    for app_dir in "${SOURCE_PATH}"/apps/*; do
+        [[ -d "$app_dir" ]] || continue
+        app_id="$(basename "$app_dir")"
+
+        WIN_EXECUTABLE=""
+        # shellcheck source=/dev/null
+        source "${SOURCE_PATH}/apps/${app_id}/info"
+        normalized_executable="$(waNormalizeWindowsExecutable "$WIN_EXECUTABLE")"
+        [[ -n "$normalized_executable" ]] || continue
+
+        if [[ -z "${OFFICIAL_APP_BY_EXE[$normalized_executable]:-}" ]]; then
+            OFFICIAL_APP_BY_EXE["$normalized_executable"]="$app_id"
+        fi
+    done
+}
+
+function waFindOfficialAppForExecutable() {
+    local normalized_executable=""
+
+    normalized_executable="$(waNormalizeWindowsExecutable "$1")"
+    printf '%s' "${OFFICIAL_APP_BY_EXE[$normalized_executable]:-}"
+}
+
 function waBuildInstallOptions() {
     SCAN_LABELS=()
     SCAN_TYPES=()
@@ -1255,58 +1285,57 @@ function waBuildInstallOptions() {
     SCAN_EXES=()
     SCAN_NAMES=()
     SCAN_ICONS=()
-    OFFICIAL_EXES=()
     declare -gA SCAN_INDEX_BY_LABEL=()
+    declare -A seen_exes=()
 
-    local osa_list=()
-    local osa=""
     local app_id=""
-    local actual_executable=""
-    local executable_name=""
     local label=""
     local index=0
     local detected_index=""
     local exe_filename=""
     local exe_filename_noext=""
     local detected_app_id=""
-    local exe_lower=""
-
-    readarray -t osa_list < <(grep -v '^[[:space:]]*$' "$INST_FILE_PATH" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' 2>/dev/null || true)
-
-    for osa in "${osa_list[@]}"; do
-        app_id="${osa%%|||*}"
-        actual_executable="${osa#*|||}"
-        [[ -n "$app_id" && -f "${SOURCE_PATH}/apps/${app_id}/info" ]] || continue
-
-        # shellcheck source=/dev/null
-        source "${SOURCE_PATH}/apps/${app_id}/info"
-
-        executable_name="${actual_executable##*\\}"
-        executable_name="${executable_name,,}"
-        OFFICIAL_EXES+=("$executable_name")
-
-        waShortcutInstalled "$app_id" && continue
-
-        label="${FULL_NAME} (${app_id})"
-        SCAN_INDEX_BY_LABEL["$label"]="$index"
-        SCAN_LABELS+=("$label")
-        SCAN_TYPES+=("official")
-        SCAN_IDS+=("$app_id")
-        SCAN_EXES+=("$actual_executable")
-        SCAN_NAMES+=("$FULL_NAME")
-        SCAN_ICONS+=("")
-        index=$((index + 1))
-    done
+    local official_app_id=""
+    local normalized_executable=""
 
     if [[ -f "$DETECTED_FILE_PATH" ]]; then
+        waBuildOfficialAppIndex
         sed -i 's/\r//g' "$DETECTED_FILE_PATH"
         # shellcheck source=/dev/null
         source "$DETECTED_FILE_PATH"
 
         for detected_index in "${!NAMES[@]}"; do
+            normalized_executable="$(waNormalizeWindowsExecutable "${EXES[$detected_index]}")"
+            [[ -n "$normalized_executable" ]] || continue
+            [[ -n "${seen_exes[$normalized_executable]:-}" ]] && continue
+            seen_exes["$normalized_executable"]=1
+
             exe_filename="${EXES[$detected_index]##*\\}"
-            exe_lower="${exe_filename,,}"
-            waArrayContains "$exe_lower" "${OFFICIAL_EXES[@]}" && continue
+
+            app_id="${APPIDS[$detected_index]:-}"
+            if [[ -n "$app_id" && -f "${SOURCE_PATH}/apps/${app_id}/info" ]]; then
+                official_app_id="$app_id"
+            else
+                official_app_id=$(waFindOfficialAppForExecutable "${EXES[$detected_index]}" || true)
+            fi
+
+            if [[ -n "$official_app_id" ]]; then
+                waShortcutInstalled "$official_app_id" && continue
+
+                # shellcheck source=/dev/null
+                source "${SOURCE_PATH}/apps/${official_app_id}/info"
+
+                label="${FULL_NAME} (${official_app_id})"
+                SCAN_INDEX_BY_LABEL["$label"]="$index"
+                SCAN_LABELS+=("$label")
+                SCAN_TYPES+=("official")
+                SCAN_IDS+=("$official_app_id")
+                SCAN_EXES+=("${EXES[$detected_index]}")
+                SCAN_NAMES+=("$FULL_NAME")
+                SCAN_ICONS+=("")
+                index=$((index + 1))
+                continue
+            fi
 
             exe_filename_noext="${exe_filename%.*}"
             detected_app_id=$(waSafeAppId "$exe_filename_noext")
@@ -1335,7 +1364,7 @@ function waScanInstall() {
     waPrepareConnection "scan"
     waTimeSync
     waCheckRDPAccess
-    waFindInstalled
+    waScanWindowsApplications
     waBuildInstallOptions
 
     if ((${#SCAN_LABELS[@]} == 0)); then
