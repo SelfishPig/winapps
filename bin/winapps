@@ -17,8 +17,14 @@ readonly EC_NO_IP=12
 readonly EC_BAD_PORT=13
 readonly EC_UNSUPPORTED_APP=14
 readonly EC_INVALID_FLAVOR=15
+readonly EC_RDP_FAIL=16
+readonly EC_APPQUERY_FAIL=17
+readonly EC_MISSING_DIALOG=18
+readonly EC_MISSING_SOURCE=19
 
 # PATHS
+readonly BIN_PATH="${HOME}/.local/bin"
+readonly APP_PATH="${HOME}/.local/share/applications"
 readonly APPDATA_PATH="${HOME}/.local/share/winapps"
 readonly SYS_APP_PATH="/usr/local/share/winapps"
 readonly LASTRUN_PATH="${APPDATA_PATH}/lastrun"
@@ -27,6 +33,22 @@ readonly CONFIG_PATH="${HOME}/.config/winapps/winapps.conf"
 readonly COMPOSE_PATH="${HOME}/.config/winapps/compose.yaml"
 # shellcheck disable=SC2155 # Silence warnings regarding masking return values through simultaneous declaration and assignment.
 readonly SCRIPT_DIR_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+# shellcheck disable=SC2155 # Silence warnings regarding masking return values through simultaneous declaration and assignment.
+readonly SOURCE_PATH="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." &>/dev/null && pwd)"
+readonly USER_APPDATA_PATH_WIN='\\tsclient\home\.local\share\winapps'
+readonly BATCH_SCRIPT_PATH="${APPDATA_PATH}/installed.bat"
+readonly BATCH_SCRIPT_PATH_WIN="${USER_APPDATA_PATH_WIN}\\installed.bat"
+readonly TMP_INST_FILE_PATH="${APPDATA_PATH}/installed.tmp"
+readonly TMP_INST_FILE_PATH_WIN="${USER_APPDATA_PATH_WIN}\\installed.tmp"
+readonly INST_FILE_PATH="${APPDATA_PATH}/installed"
+readonly PS_SCRIPT_PATH="${SOURCE_PATH}/install/ExtractPrograms.ps1"
+readonly PS_SCRIPT_HOME_PATH="${APPDATA_PATH}/ExtractPrograms.ps1"
+readonly PS_SCRIPT_HOME_PATH_WIN="${USER_APPDATA_PATH_WIN}\\ExtractPrograms.ps1"
+readonly DETECTED_FILE_PATH="${APPDATA_PATH}/detected"
+readonly DETECTED_FILE_PATH_WIN="${USER_APPDATA_PATH_WIN}\\detected"
+readonly TEST_PATH="${APPDATA_PATH}/FreeRDP_Connection_Test"
+readonly TEST_PATH_WIN="${USER_APPDATA_PATH_WIN}\\FreeRDP_Connection_Test"
+readonly INQUIRER_PATH="${SOURCE_PATH}/install/inquirer.sh"
 readonly SLEEP_DETECT_PATH="${APPDATA_PATH}/last_activity"
 readonly SLEEP_MARKER="${APPDATA_PATH}/sleep_marker"
 
@@ -54,6 +76,8 @@ AUTOPAUSE="off"
 AUTOPAUSE_TIME="300"
 DEBUG="true"
 BOOT_TIMEOUT=120
+RDP_TIMEOUT=30
+APP_SCAN_TIMEOUT=60
 HIDEF="on"
 RDP_FLATPAK=0
 RDP_FLAGS_WINDOWS=""
@@ -280,6 +304,22 @@ Please run:
         dprint "ERROR: INVALID FLAVOR. EXITING."
         notify-send --expire-time=8000 --icon="dialog-error" --app-name="WinApps" --urgency="low" "WinApps" "Invalid WinApps flavor.\nPlease ensure 'docker', 'podman' or 'libvirt' are specified as the flavor in the WinApps configuration file."
         ;;
+    "$EC_RDP_FAIL")
+        dprint "ERROR: FREERDP CONNECTION TEST FAILED. EXITING."
+        notify-send --expire-time=8000 --icon="dialog-error" --app-name="WinApps" --urgency="low" "WinApps" "FreeRDP failed to establish a working RemoteApp connection."
+        ;;
+    "$EC_APPQUERY_FAIL")
+        dprint "ERROR: APPLICATION QUERY FAILED. EXITING."
+        notify-send --expire-time=8000 --icon="dialog-error" --app-name="WinApps" --urgency="low" "WinApps" "Failed to query Windows for installed applications."
+        ;;
+    "$EC_MISSING_DIALOG")
+        dprint "ERROR: DIALOG IS NOT INSTALLED. EXITING."
+        notify-send --expire-time=8000 --icon="dialog-error" --app-name="WinApps" --urgency="low" "WinApps" "The 'dialog' command is required for winapps scan."
+        ;;
+    "$EC_MISSING_SOURCE")
+        dprint "ERROR: WINAPPS SOURCE CHECKOUT IS MISSING. EXITING."
+        notify-send --expire-time=8000 --icon="dialog-error" --app-name="WinApps" --urgency="low" "WinApps" "The WinApps source checkout is missing or incomplete."
+        ;;
     esac
 
     # Terminate the script.
@@ -312,6 +352,7 @@ function waHelp() {
     echo "  ${script_name} help"
     echo "  ${script_name} windows"
     echo "  ${script_name} manual <remoteapp-executable>"
+    echo "  ${script_name} scan"
     echo "  ${script_name} <app> [file]"
     echo "  ${script_name} killrdp"
     echo "  ${script_name} cleanrdp"
@@ -321,6 +362,7 @@ function waHelp() {
     echo "  help                           --> Show this help message."
     echo "  windows                        --> Start a full Windows desktop RDP session."
     echo "  manual <remoteapp-executable>  --> Start a RemoteApp session for an arbitrary executable."
+    echo "  scan                           --> Install or uninstall Linux shortcuts for detected Windows applications."
     echo "  <app> [file]                   --> Start a community-tested application using a preconfigured definition. Optionally open a file."
     echo "  killrdp                        --> Terminate any running WinApps FreeRDP sessions."
     echo "  cleanrdp                       --> Remove orphaned FreeRDP process tracking files."
@@ -896,6 +938,496 @@ function waRunCommand() {
     fi
 }
 
+function waLoadInquirer() {
+    if ! command -v dialog &>/dev/null; then
+        echo "The 'dialog' command is required for winapps scan."
+        waThrowExit "$EC_MISSING_DIALOG"
+    fi
+
+    if [[ ! -f "$INQUIRER_PATH" || ! -d "${SOURCE_PATH}/apps" || ! -f "$PS_SCRIPT_PATH" ]]; then
+        echo "The WinApps source checkout is missing or incomplete at '${SOURCE_PATH}'."
+        waThrowExit "$EC_MISSING_SOURCE"
+    fi
+
+    # shellcheck source=/dev/null
+    source "$INQUIRER_PATH"
+}
+
+function waShellQuote() {
+    printf '%q' "$1"
+}
+
+function waPrepareConnection() {
+    local command_name="$1"
+
+    waLoadConfig
+    waGetFreeRDPCommand "$command_name"
+    waCleanFreeRDP
+
+    RDP_PASSWORD_ARG="/p:$RDP_PASS"
+
+    if [[ -n "$RDP_ASKPASS" ]]; then
+        export FREERDP_ASKPASS="$RDP_ASKPASS"
+        unset RDP_PASSWORD_ARG
+    fi
+
+    if [ "$WAFLAVOR" = "podman" ]; then
+        FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
+    fi
+
+    if [ "$WAFLAVOR" = "docker" ] || [ "$WAFLAVOR" = "podman" ]; then
+        RDP_IP="$DOCKER_IP"
+        waCheckContainerRunning
+    elif [ "$WAFLAVOR" = "libvirt" ]; then
+        waCheckGroupMembership
+        waCheckVMRunning
+    elif [ "$WAFLAVOR" = "manual" ]; then
+        waCheckPortOpen
+    else
+        waThrowExit "$EC_INVALID_FLAVOR"
+    fi
+
+    waCheckPortOpen
+}
+
+function waCheckRDPAccess() {
+    local FREERDP_LOG=""
+    local FREERDP_PROC=""
+    local ELAPSED_TIME=0
+
+    echo -n "Testing RemoteApp access... "
+
+    FREERDP_LOG="${APPDATA_PATH}/FreeRDP_Test_$(date +'%Y%m%d_%H%M_%N').log"
+    mkdir -p "$APPDATA_PATH"
+    rm -f "$TEST_PATH"
+
+    # shellcheck disable=SC2140,SC2027,SC2086 # FreeRDP arguments intentionally contain structured values.
+    $FREERDP_COMMAND \
+        $RDP_FLAGS_NON_WINDOWS \
+        /cert:tofu \
+        /d:"$RDP_DOMAIN" \
+        /u:"$RDP_USER" \
+        ${RDP_PASSWORD_ARG:+"$RDP_PASSWORD_ARG"} \
+        /scale:"$RDP_SCALE" \
+        +auto-reconnect \
+        +home-drive \
+        /app:program:"C:\Windows\System32\cmd.exe",cmd:"/C type NUL > $TEST_PATH_WIN && tsdiscon" \
+        /v:"$RDP_IP":"$RDP_PORT" &>"$FREERDP_LOG" &
+
+    FREERDP_PROC=$!
+
+    while [ "$ELAPSED_TIME" -lt "$RDP_TIMEOUT" ]; do
+        if ! ps -p "$FREERDP_PROC" &>/dev/null || [ -f "$TEST_PATH" ]; then
+            break
+        fi
+
+        sleep 5
+        ELAPSED_TIME=$((ELAPSED_TIME + 5))
+    done
+
+    if ps -p "$FREERDP_PROC" &>/dev/null; then
+        kill -9 "$FREERDP_PROC" &>/dev/null
+    fi
+
+    if ! [ -f "$TEST_PATH" ]; then
+        echo "Failed."
+        echo "FreeRDP log: $FREERDP_LOG"
+        waThrowExit "$EC_RDP_FAIL"
+    fi
+
+    rm -f "$TEST_PATH"
+    echo "Done."
+}
+
+function waFindInstalled() {
+    local FREERDP_LOG=""
+    local FREERDP_PROC=""
+    local ELAPSED_TIME=0
+    local APPLICATION=""
+
+    echo -n "Scanning Windows applications... "
+
+    FREERDP_LOG="${APPDATA_PATH}/FreeRDP_Scan_$(date +'%Y%m%d_%H%M_%N').log"
+    mkdir -p "$APPDATA_PATH"
+    rm -f "$BATCH_SCRIPT_PATH" "$TMP_INST_FILE_PATH" "$INST_FILE_PATH" "$PS_SCRIPT_HOME_PATH" "$DETECTED_FILE_PATH"
+    cp "$PS_SCRIPT_PATH" "$PS_SCRIPT_HOME_PATH"
+
+    echo "TYPE NUL > \"${TMP_INST_FILE_PATH_WIN}\"" >"$BATCH_SCRIPT_PATH"
+
+    for APPLICATION in "${SOURCE_PATH}"/apps/*; do
+        [[ -d "$APPLICATION" ]] || continue
+        APPLICATION="$(basename "$APPLICATION")"
+
+        if [[ "$APPLICATION" == "ms-office-protocol-handler.desktop" ]]; then
+            continue
+        fi
+
+        # shellcheck source=/dev/null
+        source "${SOURCE_PATH}/apps/${APPLICATION}/info"
+        echo "IF EXIST \"${WIN_EXECUTABLE}\" ECHO ${APPLICATION}^|^|^|${WIN_EXECUTABLE} >> \"${TMP_INST_FILE_PATH_WIN}\"" >>"$BATCH_SCRIPT_PATH"
+    done
+
+    echo "powershell.exe -ExecutionPolicy Bypass -File ${PS_SCRIPT_HOME_PATH_WIN} > ${DETECTED_FILE_PATH_WIN}" >>"$BATCH_SCRIPT_PATH"
+    echo "MOVE /Y \"${TMP_INST_FILE_PATH_WIN}\" \"${INST_FILE_PATH_WIN}\" > NUL" >>"$BATCH_SCRIPT_PATH"
+    echo "tsdiscon" >>"$BATCH_SCRIPT_PATH"
+
+    # shellcheck disable=SC2140,SC2027,SC2086 # FreeRDP arguments intentionally contain structured values.
+    $FREERDP_COMMAND \
+        $RDP_FLAGS_NON_WINDOWS \
+        /cert:tofu \
+        /d:"$RDP_DOMAIN" \
+        /u:"$RDP_USER" \
+        ${RDP_PASSWORD_ARG:+"$RDP_PASSWORD_ARG"} \
+        /scale:"$RDP_SCALE" \
+        +auto-reconnect \
+        +home-drive \
+        /app:program:"C:\Windows\System32\cmd.exe",cmd:"/C $BATCH_SCRIPT_PATH_WIN" \
+        /v:"$RDP_IP":"$RDP_PORT" &>"$FREERDP_LOG" &
+
+    FREERDP_PROC=$!
+
+    while [ "$ELAPSED_TIME" -lt "$APP_SCAN_TIMEOUT" ]; do
+        if ! ps -p "$FREERDP_PROC" &>/dev/null || [ -f "$INST_FILE_PATH" ]; then
+            break
+        fi
+
+        sleep 5
+        ELAPSED_TIME=$((ELAPSED_TIME + 5))
+    done
+
+    if ps -p "$FREERDP_PROC" &>/dev/null; then
+        kill -9 "$FREERDP_PROC" &>/dev/null
+    fi
+
+    if ! [ -f "$INST_FILE_PATH" ]; then
+        echo "Failed."
+        echo "FreeRDP log: $FREERDP_LOG"
+        waThrowExit "$EC_APPQUERY_FAIL"
+    fi
+
+    echo "Done."
+}
+
+function waShortcutInstalled() {
+    local app_id="$1"
+
+    [[ -f "${APP_PATH}/${app_id}.desktop" || -f "${BIN_PATH}/${app_id}" ]]
+}
+
+function waArrayContains() {
+    local needle="$1"
+    shift
+    local item=""
+
+    for item in "$@"; do
+        [[ "$item" == "$needle" ]] && return 0
+    done
+
+    return 1
+}
+
+function waSafeAppId() {
+    printf '%s' "$1" | tr ' /\\' '---' | sed 's/[^A-Za-z0-9._-]/_/g'
+}
+
+function waIsOfficeApp() {
+    case "$1" in
+    access* | excel* | onenote* | outlook* | powerpoint* | publisher* | project* | visio* | word*)
+        return 0
+        ;;
+    *)
+        return 1
+        ;;
+    esac
+}
+
+function waRefreshOfficeProtocolHandler() {
+    local app_dir=""
+    local app_id=""
+
+    for app_dir in "${APPDATA_PATH}"/apps/*; do
+        [[ -d "$app_dir" ]] || continue
+        app_id="$(basename "$app_dir")"
+        if waIsOfficeApp "$app_id" && waShortcutInstalled "$app_id"; then
+            cp "${SOURCE_PATH}/apps/ms-office-protocol-handler.desktop" "${APP_PATH}/ms-office-protocol-handler.desktop"
+            return 0
+        fi
+    done
+
+    rm -f "${APP_PATH}/ms-office-protocol-handler.desktop"
+}
+
+function waConfigureAppShortcut() {
+    local app_id="$1"
+    local icon_ext="$2"
+    local app_icon="${APPDATA_PATH}/apps/${app_id}/icon.${icon_ext}"
+    local app_script="${BIN_PATH}/${app_id}"
+    local app_desktop="${APP_PATH}/${app_id}.desktop"
+
+    # shellcheck source=/dev/null
+    source "${APPDATA_PATH}/apps/${app_id}/info"
+
+    mkdir -p "$BIN_PATH" "$APP_PATH"
+
+    {
+        echo "#!/usr/bin/env bash"
+        printf '"%s/winapps" "%s" "$@"\n' "$BIN_PATH" "$app_id"
+    } >"$app_script"
+    chmod a+x "$app_script"
+
+    {
+        echo "[Desktop Entry]"
+        echo "Name=${NAME}"
+        printf 'Exec=%s/winapps "%s" %%F\n' "$BIN_PATH" "$app_id"
+        echo "Terminal=false"
+        echo "Type=Application"
+        echo "Icon=${app_icon}"
+        echo "StartupWMClass=${FULL_NAME}"
+        echo "Comment=${FULL_NAME}"
+        echo "Categories=${CATEGORIES}"
+        echo "MimeType=${MIME_TYPES}"
+    } >"$app_desktop"
+}
+
+function waInstallOfficialShortcut() {
+    local app_id="$1"
+    local actual_executable="$2"
+    local destination="${APPDATA_PATH}/apps/${app_id}"
+    local info_path="${destination}/info"
+    local tmp_path=""
+    local quoted_executable=""
+
+    echo -n "Installing shortcut for ${app_id}... "
+
+    rm -rf "$destination"
+    mkdir -p "${APPDATA_PATH}/apps"
+    cp -r --no-preserve=mode "${SOURCE_PATH}/apps/${app_id}" "$destination"
+
+    quoted_executable=$(waShellQuote "$actual_executable")
+    tmp_path=$(mktemp "${info_path}.XXXXXX") || waThrowExit "$EC_UNKNOWN"
+    awk -v exe="$quoted_executable" '
+        /^WIN_EXECUTABLE=/ { print "WIN_EXECUTABLE=" exe; next }
+        { print }
+    ' "$info_path" >"$tmp_path" && mv "$tmp_path" "$info_path"
+
+    waConfigureAppShortcut "$app_id" svg
+    waRefreshOfficeProtocolHandler
+    echo "Done."
+}
+
+function waInstallDetectedShortcut() {
+    local app_id="$1"
+    local program_name="$2"
+    local executable="$3"
+    local icon_base64="$4"
+    local destination="${APPDATA_PATH}/apps/${app_id}"
+
+    echo -n "Installing shortcut for ${program_name}... "
+
+    rm -rf "$destination"
+    mkdir -p "$destination"
+
+    {
+        printf 'NAME=%s\n' "$(waShellQuote "$program_name")"
+        printf 'FULL_NAME=%s\n' "$(waShellQuote "$program_name")"
+        printf 'WIN_EXECUTABLE=%s\n' "$(waShellQuote "$executable")"
+        echo 'CATEGORIES="WinApps"'
+        echo 'MIME_TYPES=""'
+    } >"${destination}/info"
+
+    printf '%s' "$icon_base64" | base64 -d >"${destination}/icon.png"
+    waConfigureAppShortcut "$app_id" png
+    echo "Done."
+}
+
+function waBuildInstallOptions() {
+    SCAN_LABELS=()
+    SCAN_TYPES=()
+    SCAN_IDS=()
+    SCAN_EXES=()
+    SCAN_NAMES=()
+    SCAN_ICONS=()
+    OFFICIAL_EXES=()
+    declare -gA SCAN_INDEX_BY_LABEL=()
+
+    local osa_list=()
+    local osa=""
+    local app_id=""
+    local actual_executable=""
+    local executable_name=""
+    local label=""
+    local index=0
+    local detected_index=""
+    local exe_filename=""
+    local exe_filename_noext=""
+    local detected_app_id=""
+    local exe_lower=""
+
+    readarray -t osa_list < <(grep -v '^[[:space:]]*$' "$INST_FILE_PATH" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' 2>/dev/null || true)
+
+    for osa in "${osa_list[@]}"; do
+        app_id="${osa%%|||*}"
+        actual_executable="${osa#*|||}"
+        [[ -n "$app_id" && -f "${SOURCE_PATH}/apps/${app_id}/info" ]] || continue
+
+        # shellcheck source=/dev/null
+        source "${SOURCE_PATH}/apps/${app_id}/info"
+
+        executable_name="${actual_executable##*\\}"
+        executable_name="${executable_name,,}"
+        OFFICIAL_EXES+=("$executable_name")
+
+        waShortcutInstalled "$app_id" && continue
+
+        label="${FULL_NAME} (${app_id})"
+        SCAN_INDEX_BY_LABEL["$label"]="$index"
+        SCAN_LABELS+=("$label")
+        SCAN_TYPES+=("official")
+        SCAN_IDS+=("$app_id")
+        SCAN_EXES+=("$actual_executable")
+        SCAN_NAMES+=("$FULL_NAME")
+        SCAN_ICONS+=("")
+        index=$((index + 1))
+    done
+
+    if [[ -f "$DETECTED_FILE_PATH" ]]; then
+        sed -i 's/\r//g' "$DETECTED_FILE_PATH"
+        # shellcheck source=/dev/null
+        source "$DETECTED_FILE_PATH"
+
+        for detected_index in "${!NAMES[@]}"; do
+            exe_filename="${EXES[$detected_index]##*\\}"
+            exe_lower="${exe_filename,,}"
+            waArrayContains "$exe_lower" "${OFFICIAL_EXES[@]}" && continue
+
+            exe_filename_noext="${exe_filename%.*}"
+            detected_app_id=$(waSafeAppId "$exe_filename_noext")
+            [[ -n "$detected_app_id" ]] || continue
+            waShortcutInstalled "$detected_app_id" && continue
+
+            label="${NAMES[$detected_index]} (${detected_app_id})"
+            SCAN_INDEX_BY_LABEL["$label"]="$index"
+            SCAN_LABELS+=("$label")
+            SCAN_TYPES+=("detected")
+            SCAN_IDS+=("$detected_app_id")
+            SCAN_EXES+=("${EXES[$detected_index]}")
+            SCAN_NAMES+=("${NAMES[$detected_index]}")
+            SCAN_ICONS+=("${ICONS[$detected_index]}")
+            index=$((index + 1))
+        done
+    fi
+}
+
+function waScanInstall() {
+    local selected_apps=()
+    local selected_app=""
+    local selected_index=""
+
+    waLastRun
+    waPrepareConnection "scan"
+    waTimeSync
+    waCheckRDPAccess
+    waFindInstalled
+    waBuildInstallOptions
+
+    if ((${#SCAN_LABELS[@]} == 0)); then
+        echo "No new Windows applications were detected for shortcut installation."
+        return 0
+    fi
+
+    inqChkBx "Select Windows applications to add to Linux" SCAN_LABELS selected_apps
+
+    for selected_app in "${selected_apps[@]}"; do
+        selected_index="${SCAN_INDEX_BY_LABEL[$selected_app]}"
+        [[ -n "$selected_index" ]] || continue
+
+        if [[ "${SCAN_TYPES[$selected_index]}" == "official" ]]; then
+            waInstallOfficialShortcut "${SCAN_IDS[$selected_index]}" "${SCAN_EXES[$selected_index]}"
+        else
+            waInstallDetectedShortcut "${SCAN_IDS[$selected_index]}" "${SCAN_NAMES[$selected_index]}" "${SCAN_EXES[$selected_index]}" "${SCAN_ICONS[$selected_index]}"
+        fi
+    done
+}
+
+function waBuildUninstallOptions() {
+    UNINSTALL_LABELS=()
+    UNINSTALL_IDS=()
+    declare -gA UNINSTALL_INDEX_BY_LABEL=()
+
+    local desktop_file=""
+    local app_id=""
+    local label=""
+    local index=0
+
+    for desktop_file in "${APP_PATH}"/*.desktop; do
+        [[ -f "$desktop_file" ]] || continue
+        grep -q "${BIN_PATH}/winapps" "$desktop_file" || continue
+
+        app_id="$(basename "$desktop_file" .desktop)"
+        [[ "$app_id" == "windows" || "$app_id" == "ms-office-protocol-handler" ]] && continue
+
+        if [[ -f "${APPDATA_PATH}/apps/${app_id}/info" ]]; then
+            # shellcheck source=/dev/null
+            source "${APPDATA_PATH}/apps/${app_id}/info"
+            label="${FULL_NAME} (${app_id})"
+        else
+            label="$app_id"
+        fi
+
+        UNINSTALL_INDEX_BY_LABEL["$label"]="$index"
+        UNINSTALL_LABELS+=("$label")
+        UNINSTALL_IDS+=("$app_id")
+        index=$((index + 1))
+    done
+}
+
+function waScanUninstall() {
+    local selected_apps=()
+    local selected_app=""
+    local selected_index=""
+    local app_id=""
+
+    waBuildUninstallOptions
+
+    if ((${#UNINSTALL_LABELS[@]} == 0)); then
+        echo "No WinApps application shortcuts are installed."
+        return 0
+    fi
+
+    inqChkBx "Select WinApps shortcuts to remove from Linux" UNINSTALL_LABELS selected_apps
+
+    for selected_app in "${selected_apps[@]}"; do
+        selected_index="${UNINSTALL_INDEX_BY_LABEL[$selected_app]}"
+        [[ -n "$selected_index" ]] || continue
+        app_id="${UNINSTALL_IDS[$selected_index]}"
+
+        echo -n "Removing shortcut for ${app_id}... "
+        rm -f "${APP_PATH}/${app_id}.desktop" "${BIN_PATH}/${app_id}"
+        rm -rf "${APPDATA_PATH}/apps/${app_id}"
+        echo "Done."
+    done
+
+    waRefreshOfficeProtocolHandler
+}
+
+function waScan() {
+    local options=("Install shortcuts" "Uninstall shortcuts")
+    local selected_option=""
+
+    mkdir -p "$BIN_PATH" "$APP_PATH" "${APPDATA_PATH}/apps" "${APPDATA_PATH}/icons"
+    waLoadInquirer
+    inqMenu "Manage WinApps application shortcuts" options selected_option
+
+    case "$selected_option" in
+    "Install shortcuts")
+        waScanInstall
+        ;;
+    "Uninstall shortcuts")
+        waScanUninstall
+        ;;
+    esac
+}
+
 # Name: 'waCheckIdle'
 # Role: Suspend Windows if idle.
 function waCheckIdle() {
@@ -995,38 +1527,15 @@ dprint "SCRIPT_DIR: ${SCRIPT_DIR_PATH}"
 dprint "SCRIPT_ARGS: ${*}"
 dprint "HOME_DIR: ${HOME}"
 waEarlyDispatch "$@"
+
+if [[ "${1:-}" == "scan" ]]; then
+    waScan
+    dprint "END"
+    exit 0
+fi
+
 waLastRun
-waLoadConfig
-waGetFreeRDPCommand "$1"
-waCleanFreeRDP
-
-# Send password on the command line if a command to retrieve the password from is not given
-# Otherwise, set FREERDP_ASKPASS which freerdp will read the stdout of to use as the password
-RDP_PASSWORD_ARG="/p:$RDP_PASS"
-
-if [[ ! -z "$RDP_ASKPASS" ]]; then
-    export FREERDP_ASKPASS="$RDP_ASKPASS"
-    unset RDP_PASSWORD_ARG
-fi
-
-# If using podman backend, modify the FreeRDP command to enter a new namespace.
-if [ "$WAFLAVOR" = "podman" ]; then
-    FREERDP_COMMAND="podman unshare --rootless-netns ${FREERDP_COMMAND}"
-fi
-
-if [ "$WAFLAVOR" = "docker" ] || [ "$WAFLAVOR" = "podman" ]; then
-    RDP_IP="$DOCKER_IP"
-    waCheckContainerRunning
-elif [ "$WAFLAVOR" = "libvirt" ]; then
-    waCheckGroupMembership
-    waCheckVMRunning
-elif [ "$WAFLAVOR" = "manual" ]; then
-    waCheckPortOpen
-else
-    waThrowExit "$EC_INVALID_FLAVOR"
-fi
-
-waCheckPortOpen
+waPrepareConnection "$1"
 waTimeSync
 waRunCommand "$@"
 

@@ -329,17 +329,9 @@ Contributing to the list of supported applications is encouraged through submiss
         </table>
 
 ## Installation
-### Step 1: Configure a Windows VM
-Both `Docker` and `Podman` are recommended backends for running the Windows virtual machine, as they facilitate an automated Windows installation process. WinApps is also compatible with `libvirt`. While this method requires considerably more manual configuration, it also provides greater virtual machine customisation options. All three methods leverage the `KVM` hypervisor, ensuring excellent virtual machine performance. Ultimately, the choice of backend depends on your specific use case.
+### Step 1: Install Dependencies
+The default installation path uses Docker. The setup script checks for required dependencies and exits with a summary if anything is missing.
 
-The following guides are available:
-- [Creating a Windows VM with `Docker` or `Podman`](docs/docker.md)
-- [Creating a Windows VM with `libvirt`](docs/libvirt.md)
-
-If you already have a Windows VM or server you wish to use with WinApps, you will still have to follow the [final steps described in the `libvirt` documentation](docs/libvirt.md#final-configuration-steps).
-
-### Step 2: Install Dependencies
-Install the required dependencies.
   - Debian/Ubuntu:
       ```bash
       sudo apt install -y curl dialog freerdp3-x11 git iproute2 libnotify-bin netcat-openbsd
@@ -373,8 +365,27 @@ Install the required dependencies.
 > sudo flatpak override --filesystem=home com.freerdp.FreeRDP
 > ```
 
-### Step 3: Create a WinApps Configuration File
-Create a configuration file at `~/.config/winapps/winapps.conf` containing the following:
+### Step 2: Run Setup
+Run the setup script. It clones or updates WinApps at `~/.local/winapps`, installs the `winapps` command into `~/.local/bin`, and creates Docker-first configuration files under `~/.config/winapps`.
+
+```bash
+bash <(curl https://raw.githubusercontent.com/SelfishPig/winapps/main/setup.sh)
+```
+
+If `~/.config/winapps/compose.yaml` does not exist, setup prompts for the Windows username, password, CPU cores, RAM, and disk size, then generates it from the repo template. If `~/.config/winapps/winapps.conf` does not exist, setup generates it from `winapps.conf.template` using the same username and password.
+
+When prompted, you can start the Docker container immediately. After it starts, finish Windows setup in your browser at http://127.0.0.1:8006.
+
+### Step 3: Install Windows Applications
+Install any Windows applications you want inside the Windows environment. When Windows is running and ready for RDP, scan for applications and create Linux shortcuts:
+
+```bash
+winapps scan
+```
+
+### Generated WinApps Configuration
+The setup script creates `~/.config/winapps/winapps.conf` from `winapps.conf.template`. You can edit it later to use Podman, libvirt, manual RDP, custom FreeRDP flags, or other advanced options. A full reference configuration looks like this:
+
 ```bash
 ##################################
 #   WINAPPS CONFIGURATION FILE   #
@@ -578,102 +589,75 @@ HIDEF="on"
 - If you enable `DEBUG`, a log will be created on each application start in `~/.local/share/winapps/winapps.log`.
 - If using a system on which the FreeRDP command is not `xfreerdp` or `xfreerdp3`, the correct command can be specified using `FREERDP_COMMAND`.
 
-### Step 4: Test FreeRDP
-1. Test establishing an RDP session by running the following command, replacing the `/u:`, `/p:`, and `/v:` values with the correct values specified in `~/.config/winapps/winapps.conf`.
-
-    ```bash
-    xfreerdp3 /u:"MyWindowsUser" /p:"MyWindowsPassword" /v:127.0.0.1:3389 /cert:tofu
-
-    # Or, if you are using Podman
-    podman unshare --rootless-netns xfreerdp3 /u:"MyWindowsUser" /p:"MyWindowsPassword" /v:127.0.0.1:3389 /cert:tofu
-
-    # Or, if you installed FreeRDP using Flatpak
-    flatpak run --command=xfreerdp com.freerdp.FreeRDP /u:"MyWindowsUser" /p:"MyWindowsPassword" /v:127.0.0.1:3389 /cert:tofu
-    ```
-
-    - Please note that the correct `FreeRDP` command may vary depending on your system (e.g. `xfreerdp`, `xfreerdp3`, etc.).
-    - Ensure you use the correct IP address for your Windows instance in the above command.
-    - If prompted within the terminal window, choose to accept the certificate permanently.
-
-    If the Windows desktop appears in a `FreeRDP` window, the configuration was successful and the correct RDP TLS certificate was enrolled on the Linux host. Disconnect from the RDP session and skip the following debugging step.
-
-2. [DEBUGGING STEP] If an outdated or expired certificate is detected, the `FreeRDP` command will display output resembling the following. In this case, the old certificate will need to be removed and a new RDP TLS certificate installed.
-
-    ```
-    @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-    @           WARNING: CERTIFICATE NAME MISMATCH!           @
-    @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-
-    The hostname used for this connection (192.168.122.2:3389)
-    does not match the name given in the certificate:
-    Common Name (CN):
-            RDPWindows
-    A valid certificate for the wrong name should NOT be trusted!
-
-    The host key for 192.168.122.2:3389 has changed
-
-    @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-    @    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
-    @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-
-    IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
-    Someone could be eavesdropping on you right now (man-in-the-middle attack)!
-    It is also possible that a host key has just been changed.
-    The fingerprint for the host key sent by the remote host is 8e:b4:d2:8e:4e:14:e7:4e:82:9b:07:5b:e1:68:40:18:bc:db:5f:bc:29:0d:91:83:f9:17:f9:13:e6:51:dc:36
-    Please contact your system administrator.
-    Add correct host key in /home/rohanbarar/.config/freerdp/server/192.168.122.2_3389.pem to get rid of this message.
-    ```
-
-    If you experience the above error, delete any old or outdated RDP TLS certificates associated with Windows, as they can prevent `FreeRDP` from establishing a connection.
-
-    These certificates are located within `~/.config/freerdp/server/` and follow the naming format `<Windows-VM-IPv4-Address>_<RDP-Port>.pem` (e.g., `192.168.122.2_3389.pem`, `127.0.0.1_3389.pem`, etc.).
-
-    If you use FreeRDP for purposes other than WinApps, ensure you only remove certificates related to the relevant Windows VM. If no relevant certificates are found, no action is needed.
-
-    Following deletion, re-attempt establishing an RDP session.
-
-### Step 5: Run the WinApps Installer
-With Windows still powered on, run the WinApps installer.
+### Optional: Test FreeRDP Manually
+If `winapps scan` cannot connect to Windows, test establishing an RDP session by running the following command, replacing the `/u:`, `/p:`, and `/v:` values with the correct values specified in `~/.config/winapps/winapps.conf`.
 
 ```bash
-bash <(curl https://raw.githubusercontent.com/winapps-org/winapps/main/setup.sh)
+xfreerdp3 /u:"MyWindowsUser" /p:"MyWindowsPassword" /v:127.0.0.1:3389 /cert:tofu
+
+# Or, if you are using Podman
+podman unshare --rootless-netns xfreerdp3 /u:"MyWindowsUser" /p:"MyWindowsPassword" /v:127.0.0.1:3389 /cert:tofu
+
+# Or, if you installed FreeRDP using Flatpak
+flatpak run --command=xfreerdp com.freerdp.FreeRDP /u:"MyWindowsUser" /p:"MyWindowsPassword" /v:127.0.0.1:3389 /cert:tofu
 ```
 
-Once WinApps is installed, a list of additional arguments can be accessed by running `winapps-setup --help`.
+- Please note that the correct `FreeRDP` command may vary depending on your system (e.g. `xfreerdp`, `xfreerdp3`, etc.).
+- Ensure you use the correct IP address for your Windows instance in the above command.
+- If prompted within the terminal window, choose to accept the certificate permanently.
 
-<img src="./docs/readme/installer.gif" width=1000 alt="WinApps Installer Animation.">
+If the Windows desktop appears in a `FreeRDP` window, the configuration was successful and the correct RDP TLS certificate was enrolled on the Linux host.
+
+If an outdated or expired certificate is detected, the `FreeRDP` command will display output resembling the following. In this case, the old certificate will need to be removed and a new RDP TLS certificate installed.
+
+```
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@           WARNING: CERTIFICATE NAME MISMATCH!           @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+The hostname used for this connection (192.168.122.2:3389)
+does not match the name given in the certificate:
+Common Name (CN):
+        RDPWindows
+A valid certificate for the wrong name should NOT be trusted!
+
+The host key for 192.168.122.2:3389 has changed
+
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+
+IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
+Someone could be eavesdropping on you right now (man-in-the-middle attack)!
+It is also possible that a host key has just been changed.
+The fingerprint for the host key sent by the remote host is 8e:b4:d2:8e:4e:14:e7:4e:82:9b:07:5b:e1:68:40:18:bc:db:5f:bc:29:0d:91:83:f9:17:f9:13:e6:51:dc:36
+Please contact your system administrator.
+Add correct host key in /home/rohanbarar/.config/freerdp/server/192.168.122.2_3389.pem to get rid of this message.
+```
+
+If you experience the above error, delete any old or outdated RDP TLS certificates associated with Windows, as they can prevent `FreeRDP` from establishing a connection.
+
+These certificates are located within `~/.config/freerdp/server/` and follow the naming format `<Windows-VM-IPv4-Address>_<RDP-Port>.pem` (e.g., `192.168.122.2_3389.pem`, `127.0.0.1_3389.pem`, etc.).
+
+If you use FreeRDP for purposes other than WinApps, ensure you only remove certificates related to the relevant Windows VM. If no relevant certificates are found, no action is needed.
+
+Following deletion, re-attempt establishing an RDP session.
 
 ## Managing apps post-installation
-### Redetect and add new apps installed in Windows using the WinApps Install Wizard
-The initial setup process will detect any Community Tested Applications and any additionally detected applications and make them available in your Linux application menu. If in the future you install a new application in Windows and want to add it to WinApps, you need to run the `winapps-setup` again to detect the new application(s).
+### Add or remove Linux shortcuts
+WinApps shortcuts are managed without reinstalling WinApps. Run:
 
-The setup command has a number of options that can be passed to it:
-```
-winapps-setup --help
-Usage:
-      --user                                        # Install WinApps and selected applications in /home/$(whoami)
-      --system                                      # Install WinApps and selected applications in /usr
-      --user --setupAllOfficiallySupportedApps      # Install WinApps and all officially supported applications in /home/$(whoami)
-      --system --setupAllOfficiallySupportedApps    # Install WinApps and all officially supported applications in /usr
-      --user --uninstall                            # Uninstall everything in /home/$(whoami)
-      --system --uninstall                          # Uninstall everything in /usr
-      --user --add-apps                             # Add new applications to existing installation in /home/$(whoami)
-      --system --add-apps                           # Add new applications to existing installation in /usr
-      --help                                        # Display this usage message.
+```bash
+winapps scan
 ```
 
-To re-run the app detection, run the setup like
-```
-winapps-setup --user --add-apps
-```
-
-This will bring up the familiar setup wizard screen and you step through the wizard as above choosing the apps you wish to make available.  Note that if your Windows VM is not yet running, the setup will exit and tell you to start the VM first.
+Choose `Install shortcuts` to scan Windows and add Linux launchers for detected applications. Choose `Uninstall shortcuts` to remove local Linux shortcuts. This does not install or uninstall software inside Windows.
 
 ### Adding Additional Pre-defined Applications
 Adding your own applications with custom icons and MIME types to the installer is easy. Simply copy one of the application configurations in the `apps` folder located within the WinApps repository, and:
 1. Modify the name and variables to reflect the appropriate/desired values for your application.
 2. Replace `icon.svg` with an SVG for your application (ensuring the icon is appropriately licensed).
-3. Remove and reinstall WinApps.
+3. Run `winapps scan` and install the new shortcut.
 4. Submit a pull request to add your application to WinApps as a community tested application once you have tested and verified your configuration (optional, but encouraged).
 
 ### Running Applications Manually
@@ -685,10 +669,13 @@ winapps manual executableInPath.exe
 ```
 
 ## Updating WinApps
-The installer can be run multiple times. To update your installation of WinApps:
-1. Run the WinApps installer to remove WinApps from your system.
-2. Pull the latest changes from the WinApps GitHub repository.
-3. Re-install WinApps using the WinApps installer by running `winapps-setup`.
+Run setup again to update the source checkout and installed command symlinks:
+
+```bash
+winapps-setup
+```
+
+Run `winapps scan` afterward if you added, removed, or changed Windows applications.
 
 ## WinApps Launcher (Optional)
 The [WinApps Launcher](https://github.com/winapps-org/winapps-launcher) provides a simple system tray menu that makes it easy to launch your installed Windows applications, open a full desktop RDP session, and control your Windows VM or container. You can start, stop, pause, reboot or hibernate Windows, as well as access your installed applications from a convenient list. This lightweight, optional tool helps streamline your overall WinApps experience.
@@ -697,8 +684,8 @@ The [WinApps Launcher](https://github.com/winapps-org/winapps-launcher) provides
 
 ## Installation using Nix
 
-First, follow Step 1 of the normal installation guide to create your VM.
-Then, install WinApps according to the following instructions.
+First, create or configure the Windows environment you want WinApps to use.
+Then install WinApps according to the following instructions.
 
 After installation, it will be available under `winapps`, with the installer being available under `winapps-setup`
 and the optional launcher being available under `winapps-launcher.`
@@ -712,8 +699,8 @@ experimental-features = nix-command flakes
 ```
 
 ```bash
-nix profile install github:winapps-org/winapps#winapps
-nix profile install github:winapps-org/winapps#winapps-launcher # optional
+nix profile install github:SelfishPig/winapps#winapps
+nix profile install github:SelfishPig/winapps#winapps-launcher # optional
 ```
 
 ### On NixOS using Flakes
@@ -727,7 +714,7 @@ nix profile install github:winapps-org/winapps#winapps-launcher # optional
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     winapps = {
-      url = "github:winapps-org/winapps";
+      url = "github:SelfishPig/winapps";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -797,7 +784,7 @@ However, if you still don't want to use flakes, you can use WinApps with flake-c
   environment.systemPackages =
     let
       winapps =
-        (import (builtins.fetchTarball "https://github.com/winapps-org/winapps/archive/main.tar.gz"))
+        (import (builtins.fetchTarball "https://github.com/SelfishPig/winapps/archive/main.tar.gz"))
         .packages."${system}";
     in
     [
@@ -808,10 +795,10 @@ However, if you still don't want to use flakes, you can use WinApps with flake-c
 ```
 
 ## Star History
-<a href="https://star-history.com/#winapps-org/winapps&Date">
+<a href="https://star-history.com/#SelfishPig/winapps&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=winapps-org/winapps&type=Date&theme=dark"/>
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=winapps-org/winapps&type=Date"/>
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=winapps-org/winapps&type=Date"/>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=SelfishPig/winapps&type=Date&theme=dark"/>
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=SelfishPig/winapps&type=Date"/>
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=SelfishPig/winapps&type=Date"/>
  </picture>
 </a>

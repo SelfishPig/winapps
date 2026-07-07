@@ -8,7 +8,7 @@ Although WinApps supports using `QEMU+KVM+libvirt` as a backend for running Wind
 > WinApps does __NOT__ officially support versions of Windows prior to Windows 10. Despite this, it may be possible to achieve a successful installation with some additional experimentation. If you find a way to achieve this, please share your solution through a pull request for the benefit of other users.
 > Possible setup instructions for Windows 10:
 > - 'Professional', 'Enterprise' or 'Server' editions of Windows are required to run RDP applications. Windows 'Home' will __NOT__ suffice.
-> - It is recommended to edit the initial `compose.yaml` file to keep your required username and password from the beginning.
+> - The setup script prompts for the Windows username and password before generating `~/.config/winapps/compose.yaml`.
 > - It is recommended to not use `sudo` to force commands to run. Add your user to the relevant permissions group wherever possible.
 
 > [!IMPORTANT]
@@ -21,11 +21,11 @@ Although WinApps supports using `QEMU+KVM+libvirt` as a backend for running Wind
 You can find a guide for installing `Docker Engine` [here](https://docs.docker.com/engine/install/).
 
 ### Setup `Docker` Container
-WinApps utilises `docker compose` to configure Windows VMs. A template [`compose.yaml`](../compose.yaml) is provided.
+WinApps utilises `docker compose` to configure Windows VMs. The setup script renders [`compose.yaml`](../compose.yaml) into `~/.config/winapps/compose.yaml`.
 
-Prior to installing Windows, you can modify the RAM and number of CPU cores available to the Windows VM by changing `RAM_SIZE` and `CPU_CORES` within `compose.yaml`.
+Prior to installing Windows, you can modify the RAM and number of CPU cores available to the Windows VM by changing `RAM_SIZE` and `CPU_CORES` within `~/.config/winapps/compose.yaml`.
 
-It is also possible to specify the version of Windows you wish to install within `compose.yaml` by modifying `VERSION`.
+It is also possible to specify the version of Windows you wish to install within `~/.config/winapps/compose.yaml` by modifying `VERSION`.
 
 Please refer to the [original GitHub repository](https://github.com/dockur/windows) for more information on additional configuration options.
 
@@ -38,8 +38,7 @@ Please refer to the [original GitHub repository](https://github.com/dockur/windo
 ### Installing Windows
 You can initiate the Windows installation using `docker compose`.
 ```bash
-cd winapps
-docker compose --file ./compose.yaml up
+docker compose --file ~/.config/winapps/compose.yaml up -d
 ```
 
 You can then access the Windows virtual machine via a VNC connection to complete the Windows setup by navigating to http://127.0.0.1:8006 in your web browser.
@@ -83,7 +82,7 @@ Please follow the [`docker` instructions](#setup-docker-container).
 > #### Rootless `podman` containers
 > If you are invoking podman as a user, your container will be "rootless". This can be desirable as a security feature. However, you may encounter an error about missing permissions to /dev/kvm as a consequence.
 >
-> For rootless podman to work, you need to add your user to the `kvm` group (depending on your distribution) to be able to access `/dev/kvm`. Make sure that you are using `crun` as your container runtime, not `runc`. Usually this is done by stopping all containers and (de-)installing the corresponding packages. Then either invoke podman-compose as `podman-compose --file ./compose.yaml --podman-create-args '--group-add keep-groups' up`. Or edit `compose.yaml` and uncomment the `group_add:` section at the end, and add `[]`.
+> For rootless podman to work, you need to add your user to the `kvm` group (depending on your distribution) to be able to access `/dev/kvm`. Make sure that you are using `crun` as your container runtime, not `runc`. Usually this is done by stopping all containers and (de-)installing the corresponding packages. Then either invoke podman-compose as `podman-compose --file ~/.config/winapps/compose.yaml --podman-create-args '--group-add keep-groups' up`. Or edit `~/.config/winapps/compose.yaml` and uncomment the `group_add:` section at the end, and add `[]`.
 
 > [!IMPORTANT]
 > Ensure `WAFLAVOR` is set to `"podman"` in `~/.config/winapps/winapps.conf`.
@@ -91,8 +90,7 @@ Please follow the [`docker` instructions](#setup-docker-container).
 ### Installing Windows
 You can initiate the Windows installation using `podman-compose`.
 ```bash
-cd winapps
-podman-compose --file ./compose.yaml up
+podman-compose --file ~/.config/winapps/compose.yaml up
 ```
 
 You can then access the Windows virtual machine via a VNC connection to complete the Windows setup by navigating to http://127.0.0.1:8006 in your web browser.

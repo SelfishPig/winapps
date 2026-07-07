@@ -24,6 +24,7 @@ stdenv.mkDerivation rec {
       "LICENSE.md"
       "COPYRIGHT.md"
       "setup.sh"
+      "winapps.conf.template"
     ];
   };
 
@@ -34,10 +35,6 @@ stdenv.mkDerivation rec {
     dialog
     netcat
     iproute2
-  ];
-
-  patches = [
-    ./setup.patch
   ];
 
   postPatch = ''
@@ -67,7 +64,7 @@ stdenv.mkDerivation rec {
   '';
 
   meta = with lib; {
-    homepage = "https://github.com/winapps-org/winapps";
+    homepage = "https://github.com/SelfishPig/winapps";
     description = "Run Windows applications (including Microsoft 365 and Adobe Creative Cloud) on GNU/Linux with KDE, GNOME or XFCE, integrated seamlessly as if they were native to the OS. Wayland is currently unsupported.";
     mainProgram = "winapps";
     platforms = platforms.linux;

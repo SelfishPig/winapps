@@ -1,0 +1,62 @@
+##################################
+#   WINAPPS CONFIGURATION FILE   #
+##################################
+
+# [WINDOWS USERNAME]
+RDP_USER="MyWindowsUser"
+
+# [WINDOWS PASSWORD]
+# RDP_ASKPASS can be used instead of RDP_PASS to retrieve the password from
+# another command. If specified, RDP_ASKPASS takes precedence over RDP_PASS.
+RDP_PASS="MyWindowsPassword"
+RDP_ASKPASS=""
+
+# [WINDOWS DOMAIN]
+RDP_DOMAIN=""
+
+# [WINDOWS IPV4 ADDRESS]
+# Docker and Podman default to localhost. Libvirt can auto-detect when blank.
+RDP_IP="127.0.0.1"
+
+# [RDP PORT]
+RDP_PORT="3389"
+
+# [VM NAME]
+# Only used by the libvirt backend.
+VM_NAME="RDPWindows"
+
+# [WINAPPS BACKEND]
+# Valid values: docker, podman, libvirt, manual
+WAFLAVOR="docker"
+
+# [DISPLAY SCALING FACTOR]
+# Valid values: 100, 140, 180
+RDP_SCALE="100"
+
+# [MOUNTING REMOVABLE PATHS FOR FILES]
+REMOVABLE_MEDIA="/run/media"
+
+# [ADDITIONAL FREERDP FLAGS & ARGUMENTS]
+RDP_FLAGS="/cert:tofu /sound /microphone +home-drive"
+RDP_FLAGS_NON_WINDOWS=""
+RDP_FLAGS_WINDOWS=""
+
+# [DEBUG WINAPPS]
+DEBUG="true"
+
+# [AUTOMATICALLY PAUSE WINDOWS]
+AUTOPAUSE="off"
+AUTOPAUSE_TIME="300"
+
+# [FREERDP COMMAND]
+# Leave blank to auto-detect xfreerdp, xfreerdp3, SDL FreeRDP, or Flatpak.
+FREERDP_COMMAND=""
+
+# [TIMEOUTS]
+PORT_TIMEOUT="5"
+RDP_TIMEOUT="30"
+APP_SCAN_TIMEOUT="60"
+BOOT_TIMEOUT="120"
+
+# [FREERDP RAIL HIDEF]
+HIDEF="on"
