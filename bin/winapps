@@ -1099,7 +1099,15 @@ function waFindInstalled() {
         kill -9 "$FREERDP_PROC" &>/dev/null
     fi
 
-    if ! [ -f "$INST_FILE_PATH" ]; then
+    if [[ ! -f "$INST_FILE_PATH" && -f "$TMP_INST_FILE_PATH" ]]; then
+        mv "$TMP_INST_FILE_PATH" "$INST_FILE_PATH"
+    fi
+
+    if [[ ! -f "$INST_FILE_PATH" && -f "$DETECTED_FILE_PATH" ]]; then
+        : >"$INST_FILE_PATH"
+    fi
+
+    if [[ ! -f "$INST_FILE_PATH" && ! -f "$DETECTED_FILE_PATH" ]]; then
         echo "Failed."
         echo "FreeRDP log: $FREERDP_LOG"
         waThrowExit "$EC_APPQUERY_FAIL"
