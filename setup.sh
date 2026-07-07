@@ -191,14 +191,22 @@ function waPromptPassword() {
     while [[ -z "$value" ]]; do
         if [[ -n "$default_value" ]]; then
             read -r -s -p "Windows password [existing value hidden]: " value
-            echo
+            echo >&2
             value="${value:-$default_value}"
         else
             read -r -s -p "Windows password: " value
-            echo
+            echo >&2
         fi
     done
 
+    printf '%s' "$value"
+}
+
+function waStripLineEndings() {
+    local value="$1"
+
+    value="${value//$'\r'/}"
+    value="${value//$'\n'/}"
     printf '%s' "$value"
 }
 
@@ -234,13 +242,19 @@ function waPromptDockerConfig() {
     local default_user="${RDP_USER:-MyWindowsUser}"
     local default_pass="${RDP_PASS:-}"
 
-    RDP_USER=$(waPromptRequired "Windows username" "$default_user")
-    RDP_PASS=$(waPromptPassword "$default_pass")
+    echo
+    echo -e "${BOLD_TEXT}Windows VM setup${CLEAR_TEXT}"
+    echo "Choose the Windows account and resources for the Docker VM that setup will generate."
+    echo "These values are written to ~/.config/winapps/compose.yaml and ~/.config/winapps/winapps.conf."
+    echo
+
+    RDP_USER=$(waStripLineEndings "$(waPromptRequired "Windows username" "$default_user")")
+    RDP_PASS=$(waStripLineEndings "$(waPromptPassword "$default_pass")")
 
     if [[ ! -f "$COMPOSE_PATH" ]]; then
-        CPU_CORES=$(waPromptValue "CPU cores for the Windows container" "$CPU_CORES")
-        RAM_SIZE=$(waNormalizeSize "$(waPromptValue "RAM for the Windows container" "$RAM_SIZE")")
-        DISK_SIZE=$(waNormalizeSize "$(waPromptValue "Disk size for the Windows container" "$DISK_SIZE")")
+        CPU_CORES=$(waStripLineEndings "$(waPromptValue "CPU cores for the Windows container" "$CPU_CORES")")
+        RAM_SIZE=$(waNormalizeSize "$(waStripLineEndings "$(waPromptValue "RAM for the Windows container" "$RAM_SIZE")")")
+        DISK_SIZE=$(waNormalizeSize "$(waStripLineEndings "$(waPromptValue "Disk size for the Windows container" "$DISK_SIZE")")")
     fi
 }
 
