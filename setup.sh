@@ -13,7 +13,7 @@ readonly SUCCESS_TEXT="\033[1;42;37m"
 readonly WARNING_TEXT="\033[1;33m"
 
 readonly REPO_URL="https://github.com/SelfishPig/winapps.git"
-readonly USER_SOURCE_PATH="${HOME}/.local/winapps"
+readonly USER_SOURCE_PATH="${HOME}/.local/share/winapps/git"
 readonly USER_BIN_PATH="${HOME}/.local/bin"
 readonly USER_APP_PATH="${HOME}/.local/share/applications"
 readonly USER_APPDATA_PATH="${HOME}/.local/share/winapps"

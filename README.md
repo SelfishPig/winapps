@@ -366,7 +366,7 @@ The default installation path uses Docker. The setup script checks for required 
 > ```
 
 ### Step 2: Run Setup
-Run the setup script. It clones or updates WinApps at `~/.local/winapps`, installs the `winapps` command into `~/.local/bin`, and creates Docker-first configuration files under `~/.config/winapps`.
+Run the setup script. It clones or updates WinApps at `~/.local/share/winapps/git`, installs the `winapps` command into `~/.local/bin`, and creates Docker-first configuration files under `~/.config/winapps`.
 
 ```bash
 bash <(curl https://raw.githubusercontent.com/SelfishPig/winapps/main/setup.sh)
