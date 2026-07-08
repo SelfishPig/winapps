@@ -81,6 +81,7 @@ HIDEF="on"
 RDP_FLATPAK=0
 RDP_FLAGS_WINDOWS=""
 RDP_FLAGS_NON_WINDOWS=""
+FREERDP_OUTPUT_TO_CONSOLE=false
 
 # OTHER
 FREERDP_PID=-1
@@ -351,8 +352,9 @@ function waHelp() {
     echo "  ${script_name} help"
     echo "  ${script_name} windows"
     echo "  ${script_name} manual <remoteapp-executable>"
+    echo "  ${script_name} debug <app> [file]"
     echo "  ${script_name} scan"
-    echo "  ${script_name} <app> [file]"
+    echo "  ${script_name} <app> [--debug] [file]"
     echo "  ${script_name} killrdp"
     echo "  ${script_name} cleanrdp"
     echo
@@ -361,8 +363,9 @@ function waHelp() {
     echo "  help                           --> Show this help message."
     echo "  windows                        --> Start a full Windows desktop RDP session."
     echo "  manual <remoteapp-executable>  --> Start a RemoteApp session for an arbitrary executable."
+    echo "  debug <app> [file]             --> Start an application with FreeRDP output displayed in the console."
     echo "  scan                           --> Install or uninstall Linux shortcuts for detected Windows applications."
-    echo "  <app> [file]                   --> Start a community-tested application using a preconfigured definition. Optionally open a file."
+    echo "  <app> [--debug] [file]         --> Start a community-tested application using a preconfigured definition. Optionally open a file."
     echo "  killrdp                        --> Terminate any running WinApps FreeRDP sessions."
     echo "  cleanrdp                       --> Remove orphaned FreeRDP process tracking files."
 }
@@ -819,8 +822,8 @@ function waRunCommand() {
 
         # Open Windows RDP session.
         dprint "WINDOWS"
-        # shellcheck disable=SC2086 #Disable warning for globbing and word splitting
-        $FREERDP_COMMAND \
+        # shellcheck disable=SC2086 # FreeRDP arguments intentionally contain configured flags.
+        waRunFreeRDP \
             $RDP_FLAGS_WINDOWS \
             /d:"$RDP_DOMAIN" \
             /u:"$RDP_USER" \
@@ -830,15 +833,12 @@ function waRunCommand() {
             +dynamic-resolution \
             /wm-class:"Microsoft Windows" \
             /t:"Windows RDP Session [$RDP_IP]" \
-            /v:"$RDP_IP":"$RDP_PORT" &>/dev/null &
-
-        # Capture the process ID.
-        FREERDP_PID=$!
+            /v:"$RDP_IP":"$RDP_PORT"
     elif [ "$1" = "manual" ]; then
         # Open specified application.
         dprint "MANUAL: ${2}"
-        # shellcheck disable=SC2086 #Disable warning for globbing and word splitting
-        $FREERDP_COMMAND \
+        # shellcheck disable=SC2086 # FreeRDP arguments intentionally contain configured flags.
+        waRunFreeRDP \
             $RDP_FLAGS_NON_WINDOWS \
             /d:"$RDP_DOMAIN" \
             /u:"$RDP_USER" \
@@ -846,10 +846,7 @@ function waRunCommand() {
             /scale:"$RDP_SCALE" \
             +auto-reconnect \
             /app:program:"$2",hidef:"$HIDEF" \
-            /v:"$RDP_IP":"$RDP_PORT" &>/dev/null &
-
-        # Capture the process ID.
-        FREERDP_PID=$!
+            /v:"$RDP_IP":"$RDP_PORT"
     else
         # Script summoned from right-click menu or application icon (plus/minus a file path).
         if [ -e "${SCRIPT_DIR_PATH}/../apps/${1}/info" ]; then
@@ -871,9 +868,9 @@ function waRunCommand() {
         # Check if a file path was specified, and pass this to the application.
         if [ -z "$2" ]; then
             # No file path specified.
-            # shellcheck disable=SC2086 #Disable warning for globbing and word splitting
-            $FREERDP_COMMAND \
-               $RDP_FLAGS_NON_WINDOWS \
+            # shellcheck disable=SC2086 # FreeRDP arguments intentionally contain configured flags.
+            waRunFreeRDP \
+                $RDP_FLAGS_NON_WINDOWS \
                 /d:"$RDP_DOMAIN" \
                 /u:"$RDP_USER" \
                 ${RDP_PASSWORD_ARG:+"$RDP_PASSWORD_ARG"} \
@@ -881,10 +878,7 @@ function waRunCommand() {
                 +auto-reconnect \
                 /wm-class:"$FULL_NAME" \
                 /app:program:"$WIN_EXECUTABLE",hidef:"$HIDEF",icon:"$ICON",name:"$FULL_NAME" \
-                /v:"$RDP_IP":"$RDP_PORT" &>/dev/null &
-
-            # Capture the process ID.
-            FREERDP_PID=$!
+                /v:"$RDP_IP":"$RDP_PORT"
         else
             # Convert path from UNIX to Windows style.
             FILE_PATH=$(echo "$2" | sed \
@@ -894,9 +888,9 @@ function waRunCommand() {
             dprint "UNIX_FILE_PATH: ${2}"
             dprint "WINDOWS_FILE_PATH: ${FILE_PATH}"
 
-            # shellcheck disable=SC2086 #Disable warning for globbing and word splitting
-            $FREERDP_COMMAND \
-               $RDP_FLAGS_NON_WINDOWS \
+            # shellcheck disable=SC2086 # FreeRDP arguments intentionally contain configured flags.
+            waRunFreeRDP \
+                $RDP_FLAGS_NON_WINDOWS \
                 /d:"$RDP_DOMAIN" \
                 /u:"$RDP_USER" \
                 ${RDP_PASSWORD_ARG:+"$RDP_PASSWORD_ARG"} \
@@ -905,10 +899,7 @@ function waRunCommand() {
                 /drive:media,"$REMOVABLE_MEDIA" \
                 /wm-class:"$FULL_NAME" \
                 /app:program:"$WIN_EXECUTABLE",hidef:"$HIDEF",icon:"$ICON",name:"$FULL_NAME",cmd:\""$FILE_PATH"\" \
-                /v:"$RDP_IP":"$RDP_PORT" &>/dev/null &
-
-            # Capture the process ID.
-            FREERDP_PID=$!
+                /v:"$RDP_IP":"$RDP_PORT"
         fi
     fi
 
@@ -993,6 +984,18 @@ function waPrepareConnection() {
     fi
 
     waCheckPortOpen
+}
+
+function waRunFreeRDP() {
+    if [[ "$FREERDP_OUTPUT_TO_CONSOLE" == "true" ]]; then
+        # shellcheck disable=SC2086 # FreeRDP command intentionally supports configured command wrappers.
+        $FREERDP_COMMAND "$@" &
+    else
+        # shellcheck disable=SC2086 # FreeRDP command intentionally supports configured command wrappers.
+        $FREERDP_COMMAND "$@" &>/dev/null &
+    fi
+
+    FREERDP_PID=$!
 }
 
 function waCheckRDPAccess() {
@@ -1601,6 +1604,31 @@ dprint "START"
 dprint "SCRIPT_DIR: ${SCRIPT_DIR_PATH}"
 dprint "SCRIPT_ARGS: ${*}"
 dprint "HOME_DIR: ${HOME}"
+waEarlyDispatch "$@"
+
+if [[ "${1:-}" == "debug" ]]; then
+    FREERDP_OUTPUT_TO_CONSOLE=true
+    shift
+fi
+
+if [[ "${1:-}" != "manual" && "${1:-}" != "windows" && "${1:-}" != "scan" ]]; then
+    NORMALIZED_ARGS=()
+    for ARG in "$@"; do
+        if [[ "$ARG" == "--debug" ]]; then
+            FREERDP_OUTPUT_TO_CONSOLE=true
+        else
+            NORMALIZED_ARGS+=("$ARG")
+        fi
+    done
+    set -- "${NORMALIZED_ARGS[@]}"
+    unset NORMALIZED_ARGS ARG
+fi
+
+if [[ -z "${1:-}" ]]; then
+    waHelp
+    exit 1
+fi
+
 waEarlyDispatch "$@"
 
 if [[ "${1:-}" == "scan" ]]; then

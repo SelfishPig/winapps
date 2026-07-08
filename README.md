@@ -668,6 +668,15 @@ winapps manual "C:\my\directory\executableNotInPath.exe"
 winapps manual executableInPath.exe
 ```
 
+### Debugging Application Launches
+To show all FreeRDP output in the console while launching a configured application, run:
+
+```bash
+winapps debug word
+winapps word --debug
+word --debug
+```
+
 ## Updating WinApps
 Run setup again to update the source checkout and installed command symlinks:
 
