@@ -7,7 +7,7 @@ services:
     image: ghcr.io/dockur/windows:latest
     container_name: WinApps # Created Docker VM Name.
     environment:
-      VERSION: "11"
+      VERSION: "11i"
       RAM_SIZE: "4G"
       CPU_CORES: "4"
       DISK_SIZE: "64G"
